@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/ipc/namedpipe"
+	"github.com/encodeous/polyamide-wireguard-go/ipc/namedpipe"
 	"golang.org/x/sys/windows"
 )
 

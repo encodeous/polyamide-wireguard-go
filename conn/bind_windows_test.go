@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn/winrio"
+	"github.com/encodeous/polyamide-wireguard-go/conn/winrio"
 )
 
 func TestRIOSendFlags(t *testing.T) {

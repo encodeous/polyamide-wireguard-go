@@ -6,7 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/encodeous/nylon/polyamide"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
 )
 
 type endpoint struct {

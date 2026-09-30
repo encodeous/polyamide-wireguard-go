@@ -10,8 +10,8 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/tun/tuntest"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
+	"github.com/encodeous/polyamide-wireguard-go/tun/tuntest"
 )
 
 func TestCurveWrappers(t *testing.T) {

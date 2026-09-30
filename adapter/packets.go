@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 
 	"github.com/encodeous/nylon/polyamide"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/device"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/tun"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
+	"github.com/encodeous/polyamide-wireguard-go/device"
+	"github.com/encodeous/polyamide-wireguard-go/tun"
 )
 
 // Control messages use IP version 8, followed by a big-endian payload length.

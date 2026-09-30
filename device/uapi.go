@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/ipc"
+	"github.com/encodeous/polyamide-wireguard-go/ipc"
 )
 
 var ErrIPCStatusHandled = errors.New("ipc status handled by custom handler")

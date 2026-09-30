@@ -11,7 +11,7 @@ import (
 	"net/netip"
 	"os"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/tun"
+	"github.com/encodeous/polyamide-wireguard-go/tun"
 )
 
 func Ping(dst, src netip.Addr) []byte {

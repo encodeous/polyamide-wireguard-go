@@ -12,7 +12,7 @@ import (
 	"io"
 	"unsafe"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
 	"golang.org/x/sys/unix"
 )
 

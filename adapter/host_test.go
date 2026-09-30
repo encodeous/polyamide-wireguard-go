@@ -3,7 +3,7 @@ package adapter
 import (
 	"testing"
 
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/tun"
+	"github.com/encodeous/polyamide-wireguard-go/tun"
 	"github.com/stretchr/testify/require"
 )
 

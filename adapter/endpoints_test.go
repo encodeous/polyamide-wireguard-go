@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/encodeous/nylon/polyamide"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
 	"github.com/stretchr/testify/require"
 )
 

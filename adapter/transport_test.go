@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/encodeous/nylon/polyamide"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/adapter"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/conn"
-	"github.com/encodeous/nylon/polyamide/transports/wireguard/tun/tuntest"
+	"github.com/encodeous/polyamide-wireguard-go/adapter"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
+	"github.com/encodeous/polyamide-wireguard-go/tun/tuntest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
