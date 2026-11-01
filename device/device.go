@@ -133,6 +133,14 @@ func removePeerLocked(device *Device, peer *Peer, key NoisePublicKey) {
 	device.Allowedips.RemoveByPeer(peer)
 	peer.Stop()
 
+	// Drain the peer's queues now instead of leaving it to their finalizers,
+	// which may run on a goroutine that is not allowed to receive from them
+	// (for example, outside a testing/synctest bubble).
+	device.flushInboundQueue(peer.queue.inbound)
+	device.flushOutboundQueue(peer.queue.outbound)
+	runtime.SetFinalizer(peer.queue.inbound, nil)
+	runtime.SetFinalizer(peer.queue.outbound, nil)
+
 	// remove from peer map
 	delete(device.peers.keyMap, key)
 }
