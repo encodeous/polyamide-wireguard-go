@@ -23,8 +23,6 @@ import (
 	"github.com/encodeous/polyamide-wireguard-go/ipc"
 )
 
-var ErrIPCStatusHandled = errors.New("ipc status handled by custom handler")
-
 type IPCError struct {
 	code int64 // error code
 	err  error // underlying/wrapped error
@@ -420,15 +418,6 @@ func (device *Device) IpcSet(uapiConf string) error {
 }
 
 func (device *Device) IpcHandle(socket net.Conn) {
-	device.ipcHandle(socket, true)
-}
-
-// IpcHandleReadOnly serves UAPI like IpcHandle, but rejects set operations.
-func (device *Device) IpcHandleReadOnly(socket net.Conn) {
-	device.ipcHandle(socket, false)
-}
-
-func (device *Device) ipcHandle(socket net.Conn, allowSet bool) {
 	defer socket.Close()
 
 	buffered := func(s io.ReadWriter) *bufio.ReadWriter {
@@ -446,17 +435,7 @@ func (device *Device) ipcHandle(socket net.Conn, allowSet bool) {
 		// handle operation
 		switch op {
 		case "set=1\n":
-			if allowSet {
-				err = device.IpcSetOperation(buffered.Reader)
-				break
-			}
-			// Discard the request, which ends with an empty line, then report the error.
-			for line := ""; line != "\n"; {
-				if line, err = buffered.ReadString('\n'); err != nil {
-					return
-				}
-			}
-			err = ipcErrorf(ipc.IpcErrorInvalid, "UAPI set is not supported")
+			err = device.IpcSetOperation(buffered.Reader)
 		case "get=1\n":
 			var nextByte byte
 			nextByte, err = buffered.ReadByte()
@@ -469,19 +448,11 @@ func (device *Device) ipcHandle(socket net.Conn, allowSet bool) {
 			}
 			err = device.IpcGetOperation(buffered.Writer)
 		default:
-			if fun, ok := device.IpcHandler[op]; ok {
-				err = fun(buffered)
-				break
-			}
 			device.Log.Errorf("invalid UAPI operation: %v", op)
 			return
 		}
 
 		// write status
-		if errors.Is(err, ErrIPCStatusHandled) {
-			err = nil
-			continue
-		}
 		var status *IPCError
 		if err != nil && !errors.As(err, &status) {
 			// shouldn't happen

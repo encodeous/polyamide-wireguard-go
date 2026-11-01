@@ -6,7 +6,6 @@
 package device
 
 import (
-	"bufio"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -89,10 +88,9 @@ type Device struct {
 		mtu    atomic.Int32
 	}
 
-	ipcMutex   sync.RWMutex
-	IpcHandler map[string]func(*bufio.ReadWriter) error
-	closed     chan struct{}
-	Log        *Logger
+	ipcMutex sync.RWMutex
+	closed   chan struct{}
+	Log      *Logger
 }
 
 // deviceState represents the state of a Device.
@@ -182,7 +180,6 @@ func (device *Device) upLocked() error {
 	// so if there's a concurrent IPC set request happening, we should wait for it to complete.
 	device.ipcMutex.Lock()
 	defer device.ipcMutex.Unlock()
-	device.IpcHandler = make(map[string]func(*bufio.ReadWriter) error)
 
 	device.peers.RLock()
 	for _, peer := range device.peers.keyMap {

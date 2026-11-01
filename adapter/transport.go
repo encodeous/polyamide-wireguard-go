@@ -2,7 +2,6 @@
 package adapter
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -11,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/netip"
 	"slices"
 	"sync"
@@ -27,10 +25,9 @@ type Options struct {
 	PrivateKey polyamide.PrivateKey
 	ListenPort uint16
 	// Nil uses the platform UDP bind.
-	NewBind         func() conn.Bind
-	Logger          *slog.Logger
-	Debug           bool
-	ControlHandlers map[string]func(*bufio.ReadWriter) error
+	NewBind func() conn.Bind
+	Logger  *slog.Logger
+	Debug   bool
 }
 
 type Transport struct {
@@ -99,13 +96,6 @@ func New(opts Options) (*Transport, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	if opts.ControlHandlers != nil {
-		handlers := make(map[string]func(*bufio.ReadWriter) error, len(opts.ControlHandlers))
-		for k, v := range opts.ControlHandlers {
-			handlers[k] = v
-		}
-		opts.ControlHandlers = handlers
-	}
 	t := &Transport{opts: opts, bind: bind, localPublic: device.NoisePublicKey(local.PublicKey().Bytes()), peers: make(map[device.NoisePublicKey]*peer),
 		byRaw: make(map[*device.Peer]*peer), configuredEndpoints: make(map[*peer][]conn.Endpoint), done: make(chan struct{})}
 	t.batchPool.New = func() any { return new(routeBatch) }
@@ -157,9 +147,6 @@ func (t *Transport) Start(ctx context.Context, hooks polyamide.Hooks) (err error
 	}
 	if err = dev.Up(); err != nil {
 		return err
-	}
-	for op, handler := range t.opts.ControlHandlers {
-		dev.IpcHandler[op] = handler
 	}
 	if t.closed.Load() {
 		return polyamide.ErrClosed
@@ -385,16 +372,4 @@ func (t *Transport) Close() error {
 	t.mu.Unlock()
 	close(t.done)
 	return nil
-}
-
-func (t *Transport) HandleUAPI(c net.Conn) {
-	if !t.started.Load() || t.closed.Load() {
-		_ = c.Close()
-		return
-	}
-	t.mu.RLock()
-	dev := t.dev
-	t.mu.RUnlock()
-	// Peers are managed through the transport, so UAPI cannot change them.
-	dev.IpcHandleReadOnly(c)
 }
