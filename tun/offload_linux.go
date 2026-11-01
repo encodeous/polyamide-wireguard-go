@@ -12,8 +12,8 @@ import (
 	"io"
 	"unsafe"
 
+	"github.com/encodeous/nylon/polyamide/conn"
 	"golang.org/x/sys/unix"
-	"golang.zx2c4.com/wireguard/conn"
 )
 
 const tcpFlagsOffset = 13
@@ -913,7 +913,7 @@ func gsoSplit(in []byte, hdr virtioNetHdr, outBuffs [][]byte, sizes []int, outOf
 	i := 0
 	for ; nextSegmentDataAt < len(in); i++ {
 		if i == len(outBuffs) {
-			return i - 1, ErrTooManySegments
+			return i, ErrTooManySegments
 		}
 		nextSegmentEnd := nextSegmentDataAt + int(hdr.gsoSize)
 		if nextSegmentEnd > len(in) {

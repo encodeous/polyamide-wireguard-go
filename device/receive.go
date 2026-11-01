@@ -12,10 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/encodeous/nylon/perf"
+	"github.com/encodeous/nylon/polyamide/conn"
 	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
-	"golang.zx2c4.com/wireguard/conn"
 )
 
 type QueueHandshakeElement struct {
@@ -72,13 +71,13 @@ func (peer *Peer) keepKeyFreshReceiving() {
 func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.ReceiveFunc) {
 	recvName := recv.PrettyName()
 	defer func() {
-		device.log.Verbosef("Routine: receive incoming %s - stopped", recvName)
+		device.Log.Verbosef("Routine: receive incoming %s - stopped", recvName)
 		device.queue.decryption.wg.Done()
 		device.queue.handshake.wg.Done()
 		device.net.stopping.Done()
 	}()
 
-	device.log.Verbosef("Routine: receive incoming %s - started", recvName)
+	device.Log.Verbosef("Routine: receive incoming %s - started", recvName)
 
 	// receive datagrams until conn is closed
 
@@ -112,7 +111,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-			device.log.Verbosef("Failed to receive %s packet: %v", recvName, err)
+			device.Log.Verbosef("Failed to receive %s packet: %v", recvName, err)
 			if neterr, ok := err.(net.Error); ok && !neterr.Temporary() {
 				return
 			}
@@ -203,7 +202,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 				}
 
 			default:
-				device.log.Verbosef("Received message with unknown type")
+				device.Log.Verbosef("Received message with unknown type")
 				continue
 			}
 
@@ -238,8 +237,8 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 func (device *Device) RoutineDecryption(id int) {
 	var nonce [chacha20poly1305.NonceSize]byte
 
-	defer device.log.Verbosef("Routine: decryption worker %d - stopped", id)
-	device.log.Verbosef("Routine: decryption worker %d - started", id)
+	defer device.Log.Verbosef("Routine: decryption worker %d - stopped", id)
+	device.Log.Verbosef("Routine: decryption worker %d - started", id)
 
 	for elemsContainer := range device.queue.decryption.c {
 		for _, elem := range elemsContainer.elems {
@@ -270,10 +269,10 @@ func (device *Device) RoutineDecryption(id int) {
  */
 func (device *Device) RoutineHandshake(id int) {
 	defer func() {
-		device.log.Verbosef("Routine: handshake worker %d - stopped", id)
+		device.Log.Verbosef("Routine: handshake worker %d - stopped", id)
 		device.queue.encryption.wg.Done()
 	}()
-	device.log.Verbosef("Routine: handshake worker %d - started", id)
+	device.Log.Verbosef("Routine: handshake worker %d - started", id)
 
 	for elem := range device.queue.handshake.c {
 
@@ -288,7 +287,7 @@ func (device *Device) RoutineHandshake(id int) {
 			var reply MessageCookieReply
 			err := reply.unmarshal(elem.packet)
 			if err != nil {
-				device.log.Verbosef("Failed to decode cookie reply")
+				device.Log.Verbosef("Failed to decode cookie reply")
 				goto skip
 			}
 
@@ -303,9 +302,9 @@ func (device *Device) RoutineHandshake(id int) {
 			// consume reply
 
 			if peer := entry.peer; peer.isRunning.Load() {
-				device.log.Verbosef("Receiving cookie response from %s", elem.endpoint.DstToString())
+				device.Log.Verbosef("Receiving cookie response from %s", elem.endpoint.DstToString())
 				if !peer.cookieGenerator.ConsumeReply(&reply) {
-					device.log.Verbosef("Could not decrypt invalid cookie response")
+					device.Log.Verbosef("Could not decrypt invalid cookie response")
 				}
 			}
 
@@ -316,7 +315,7 @@ func (device *Device) RoutineHandshake(id int) {
 			// check mac fields and maybe ratelimit
 
 			if !device.cookieChecker.CheckMAC1(elem.packet) {
-				device.log.Verbosef("Received packet with invalid mac1")
+				device.Log.Verbosef("Received packet with invalid mac1")
 				goto skip
 			}
 
@@ -339,7 +338,7 @@ func (device *Device) RoutineHandshake(id int) {
 			}
 
 		default:
-			device.log.Errorf("Invalid packet ended up in the handshake queue")
+			device.Log.Errorf("Invalid packet ended up in the handshake queue")
 			goto skip
 		}
 
@@ -353,7 +352,7 @@ func (device *Device) RoutineHandshake(id int) {
 			var msg MessageInitiation
 			err := msg.unmarshal(elem.packet)
 			if err != nil {
-				device.log.Errorf("Failed to decode initiation message")
+				device.Log.Errorf("Failed to decode initiation message")
 				goto skip
 			}
 
@@ -361,22 +360,22 @@ func (device *Device) RoutineHandshake(id int) {
 
 			peer := device.ConsumeMessageInitiation(&msg)
 			if peer == nil {
-				device.log.Verbosef("Received invalid initiation message from %s", elem.endpoint.DstToString())
+				device.Log.Verbosef("Received invalid initiation message from %s", elem.endpoint.DstToString())
 				goto skip
 			}
 
 			// update timers
 
-			peer.timersAnyAuthenticatedPacketTraversal()
+			peer.timersAnyAuthenticatedPacketTraversal(true)
 			peer.timersAnyAuthenticatedPacketReceived()
 
 			// update endpoint
 			peer.SetEndpointFromPacket(elem.endpoint)
 
-			device.log.Verbosef("%v - Received handshake initiation", peer)
+			device.Log.Verbosef("%v - Received handshake initiation", peer)
 			peer.rxBytes.Add(uint64(len(elem.packet)))
 
-			peer.SendHandshakeResponse()
+			peer.SendHandshakeResponse(elem.endpoint)
 
 		case MessageResponseType:
 
@@ -385,7 +384,7 @@ func (device *Device) RoutineHandshake(id int) {
 			var msg MessageResponse
 			err := msg.unmarshal(elem.packet)
 			if err != nil {
-				device.log.Errorf("Failed to decode response message")
+				device.Log.Errorf("Failed to decode response message")
 				goto skip
 			}
 
@@ -393,19 +392,19 @@ func (device *Device) RoutineHandshake(id int) {
 
 			peer := device.ConsumeMessageResponse(&msg)
 			if peer == nil {
-				device.log.Verbosef("Received invalid response message from %s", elem.endpoint.DstToString())
+				device.Log.Verbosef("Received invalid response message from %s", elem.endpoint.DstToString())
 				goto skip
 			}
 
 			// update endpoint
 			peer.SetEndpointFromPacket(elem.endpoint)
 
-			device.log.Verbosef("%v - Received handshake response", peer)
+			device.Log.Verbosef("%v - Received handshake response", peer)
 			peer.rxBytes.Add(uint64(len(elem.packet)))
 
 			// update timers
 
-			peer.timersAnyAuthenticatedPacketTraversal()
+			peer.timersAnyAuthenticatedPacketTraversal(true)
 			peer.timersAnyAuthenticatedPacketReceived()
 
 			// derive keypair
@@ -413,7 +412,7 @@ func (device *Device) RoutineHandshake(id int) {
 			err = peer.BeginSymmetricSession()
 
 			if err != nil {
-				device.log.Errorf("%v - Failed to derive keypair: %v", peer, err)
+				device.Log.Errorf("%v - Failed to derive keypair: %v", peer, err)
 				goto skip
 			}
 
@@ -429,12 +428,15 @@ func (device *Device) RoutineHandshake(id int) {
 func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 	device := peer.device
 	defer func() {
-		device.log.Verbosef("%v - Routine: sequential receiver - stopped", peer)
+		device.Log.Verbosef("%v - Routine: sequential receiver - stopped", peer)
 		peer.stopping.Done()
 	}()
-	device.log.Verbosef("%v - Routine: sequential receiver - started", peer)
+	device.Log.Verbosef("%v - Routine: sequential receiver - started", peer)
 
-	bufs := make([][]byte, 0, maxBatchSize)
+	var (
+		tcBufs = make([]*TCElement, 0, maxBatchSize)
+		tcs    = NewTCState()
+	)
 
 	for elemsContainer := range peer.queue.inbound.c {
 		if elemsContainer == nil {
@@ -444,6 +446,8 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 		validTailPacket := -1
 		dataPacketReceived := false
 		rxBytesLen := uint64(0)
+		rxPkts := 0
+
 		for i, elem := range elemsContainer.elems {
 			if elem.packet == nil {
 				// decryption failed
@@ -461,76 +465,46 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 				peer.SendStagedPackets()
 			}
 			rxBytesLen += uint64(len(elem.packet) + MinMessageSize)
+			rxPkts++
 
 			if len(elem.packet) == 0 {
-				device.log.Verbosef("%v - Receiving keepalive packet", peer)
+				device.Log.Verbosef("%v - Receiving keepalive packet", peer)
 				continue
 			}
 			dataPacketReceived = true
 
-			switch elem.packet[0] >> 4 {
-			case 4:
-				if len(elem.packet) < ipv4.HeaderLen {
-					continue
-				}
-				field := elem.packet[IPv4offsetTotalLength : IPv4offsetTotalLength+2]
-				length := binary.BigEndian.Uint16(field)
-				if int(length) > len(elem.packet) || int(length) < ipv4.HeaderLen {
-					continue
-				}
-				elem.packet = elem.packet[:length]
-				src := elem.packet[IPv4offsetSrc : IPv4offsetSrc+net.IPv4len]
-				if device.allowedips.Lookup(src) != peer {
-					device.log.Verbosef("IPv4 packet with disallowed source address from %v", peer)
-					continue
-				}
+			tce := device.GetTCElement()
+			tce.Packet = elem.packet
+			tce.Buffer = elem.buffer
+			elem.buffer = nil
+			elem.packet = nil
+			tce.FromEp = elem.endpoint
+			tce.FromPeer = peer
 
-			case 6:
-				if len(elem.packet) < ipv6.HeaderLen {
-					continue
-				}
-				field := elem.packet[IPv6offsetPayloadLength : IPv6offsetPayloadLength+2]
-				length := uint32(binary.BigEndian.Uint16(field))
-				length += ipv6.HeaderLen
-				if int(length) > len(elem.packet) {
-					continue
-				}
-				elem.packet = elem.packet[:length]
-				src := elem.packet[IPv6offsetSrc : IPv6offsetSrc+net.IPv6len]
-				if device.allowedips.Lookup(src) != peer {
-					device.log.Verbosef("IPv6 packet with disallowed source address from %v", peer)
-					continue
-				}
-
-			default:
-				device.log.Verbosef("Packet with invalid IP version from %v", peer)
-				continue
-			}
-
-			bufs = append(bufs, elem.buffer[:MessageTransportOffsetContent+len(elem.packet)])
+			tcBufs = append(tcBufs, tce)
 		}
 
+		// pass to traffic control
+		device.TCBatch(tcBufs, tcs)
+
+		tcBufs = tcBufs[:0]
+
 		peer.rxBytes.Add(rxBytesLen)
+		perf.RecvBytesPerSecond.Add(float64(rxBytesLen))
+		perf.RecvPacketPerSecond.Add(float64(rxPkts))
 		if validTailPacket >= 0 {
 			peer.SetEndpointFromPacket(elemsContainer.elems[validTailPacket].endpoint)
 			peer.keepKeyFreshReceiving()
-			peer.timersAnyAuthenticatedPacketTraversal()
+			peer.timersAnyAuthenticatedPacketTraversal(true)
 			peer.timersAnyAuthenticatedPacketReceived()
 		}
 		if dataPacketReceived {
 			peer.timersDataReceived()
 		}
-		if len(bufs) > 0 {
-			_, err := device.tun.device.Write(bufs, MessageTransportOffsetContent)
-			if err != nil && !device.isClosed() {
-				device.log.Errorf("Failed to write packets to TUN device: %v", err)
-			}
-		}
 		for _, elem := range elemsContainer.elems {
 			device.PutMessageBuffer(elem.buffer)
 			device.PutInboundElement(elem)
 		}
-		bufs = bufs[:0]
 		device.PutInboundElementsContainer(elemsContainer)
 	}
 }

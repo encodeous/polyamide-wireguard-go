@@ -7,9 +7,10 @@ package ipc
 
 import (
 	"net"
+	"time"
 
+	"github.com/encodeous/nylon/polyamide/ipc/namedpipe"
 	"golang.org/x/sys/windows"
-	"golang.zx2c4.com/wireguard/ipc/namedpipe"
 )
 
 // TODO: replace these with actual standard windows error numbers from the win package
@@ -85,4 +86,8 @@ func UAPIListen(name string) (net.Listener, error) {
 	}(uapi)
 
 	return uapi, nil
+}
+
+func UAPIDial(name string) (net.Conn, error) {
+	return namedpipe.DialTimeout(`\\.\pipe\ProtectedPrefix\Administrators\WireGuard\`+name, time.Second*10)
 }

@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"golang.zx2c4.com/wireguard/conn/winrio"
+	"github.com/encodeous/nylon/polyamide/conn/winrio"
 )
 
 const (
@@ -162,17 +162,21 @@ func (e *WinRingEndpoint) DstToBytes() []byte {
 }
 
 func (e *WinRingEndpoint) DstToString() string {
+	return e.DstIPPort().String()
+}
+
+func (e *WinRingEndpoint) DstIPPort() netip.AddrPort {
 	switch e.family {
 	case windows.AF_INET:
-		return netip.AddrPortFrom(netip.AddrFrom4(*(*[4]byte)(e.data[2:6])), binary.BigEndian.Uint16(e.data[0:2])).String()
+		return netip.AddrPortFrom(netip.AddrFrom4(*(*[4]byte)(e.data[2:6])), binary.BigEndian.Uint16(e.data[0:2]))
 	case windows.AF_INET6:
 		var zone string
 		if scope := *(*uint32)(unsafe.Pointer(&e.data[22])); scope > 0 {
 			zone = strconv.FormatUint(uint64(scope), 10)
 		}
-		return netip.AddrPortFrom(netip.AddrFrom16(*(*[16]byte)(e.data[6:22])).WithZone(zone), binary.BigEndian.Uint16(e.data[0:2])).String()
+		return netip.AddrPortFrom(netip.AddrFrom16(*(*[16]byte)(e.data[6:22])).WithZone(zone), binary.BigEndian.Uint16(e.data[0:2]))
 	}
-	return ""
+	panic("Socket Family is not supported")
 }
 
 func (e *WinRingEndpoint) SrcToString() string {
@@ -239,12 +243,32 @@ func (ring *ringBuffer) Open() error {
 	return nil
 }
 
+const (
+	IP_ORIGINAL_ARRIVAL_IF = 47
+)
+
 func (bind *afWinRingBind) Open(family int32, sa windows.Sockaddr) (windows.Sockaddr, error) {
 	var err error
 	bind.sock, err = winrio.Socket(family, windows.SOCK_DGRAM, windows.IPPROTO_UDP)
 	if err != nil {
 		return nil, err
 	}
+	newB := false
+	br := uint32(0)
+	err = windows.WSAIoctl(bind.sock, windows.SIO_UDP_CONNRESET, (*byte)(unsafe.Pointer(&newB)), uint32(unsafe.Sizeof(&newB)), nil, 0, (*uint32)(&br), nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	bv := int32(0)
+	lvl := windows.IPPROTO_IP
+	if family == windows.AF_INET6 {
+		lvl = windows.IPPROTO_IPV6
+	}
+	err = windows.Setsockopt(bind.sock, int32(lvl), IP_ORIGINAL_ARRIVAL_IF, (*byte)(unsafe.Pointer(&bv)), 4)
+	if err != nil {
+		return nil, err
+	}
+
 	err = bind.rx.Open()
 	if err != nil {
 		return nil, err
@@ -408,6 +432,9 @@ retry:
 		goto retry
 	}
 	if results[0].Status != 0 {
+		//if windows.Errno(results[0].Status) == windows.WSAECONNRESET {
+		//	goto retry
+		//}
 		return 0, nil, windows.Errno(results[0].Status)
 	}
 	packet := (*ringPacket)(unsafe.Pointer(uintptr(results[0].RequestContext)))

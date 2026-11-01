@@ -8,11 +8,13 @@ package device
 import (
 	"container/list"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"golang.zx2c4.com/wireguard/conn"
+	"github.com/encodeous/nylon/perf"
+	"github.com/encodeous/nylon/polyamide/conn"
 )
 
 type Peer struct {
@@ -25,11 +27,13 @@ type Peer struct {
 	rxBytes           atomic.Uint64  // bytes received from peer
 	lastHandshakeNano atomic.Int64   // nano seconds since epoch
 
-	endpoint struct {
+	endpoints struct {
 		sync.Mutex
-		val            conn.Endpoint
+		val            []conn.Endpoint
 		clearSrcOnTx   bool // signal to val.ClearSrc() prior to next packet transmission
 		disableRoaming bool
+		lastInitIndex  int
+		preferRoaming  bool // the endpoint from roaming will be set as the first index
 	}
 
 	timers struct {
@@ -38,6 +42,7 @@ type Peer struct {
 		newHandshake            *Timer
 		zeroKeyMaterial         *Timer
 		persistentKeepalive     *Timer
+		lastReceived            atomic.Int64
 		handshakeAttempts       atomic.Uint32
 		needAnotherKeepalive    atomic.Bool
 		sentLastMinuteHandshake atomic.Bool
@@ -97,12 +102,12 @@ func (device *Device) NewPeer(pk NoisePublicKey) (*Peer, error) {
 	handshake.remoteStatic = pk
 	handshake.mutex.Unlock()
 
-	// reset endpoint
-	peer.endpoint.Lock()
-	peer.endpoint.val = nil
-	peer.endpoint.disableRoaming = false
-	peer.endpoint.clearSrcOnTx = false
-	peer.endpoint.Unlock()
+	// reset endpoints
+	peer.endpoints.Lock()
+	peer.endpoints.val = peer.endpoints.val[:0]
+	peer.endpoints.disableRoaming = false
+	peer.endpoints.clearSrcOnTx = false
+	peer.endpoints.Unlock()
 
 	// init timers
 	peer.timersInit()
@@ -113,7 +118,7 @@ func (device *Device) NewPeer(pk NoisePublicKey) (*Peer, error) {
 	return peer, nil
 }
 
-func (peer *Peer) SendBuffers(buffers [][]byte) error {
+func (peer *Peer) SendBuffers(buffers [][]byte, eps []conn.Endpoint) error {
 	peer.device.net.RLock()
 	defer peer.device.net.RUnlock()
 
@@ -121,27 +126,59 @@ func (peer *Peer) SendBuffers(buffers [][]byte) error {
 		return nil
 	}
 
-	peer.endpoint.Lock()
-	endpoint := peer.endpoint.val
-	if endpoint == nil {
-		peer.endpoint.Unlock()
-		return errors.New("no known endpoint for peer")
+	peer.endpoints.Lock()
+	endpoints := peer.endpoints.val
+	if len(endpoints) == 0 {
+		peer.endpoints.Unlock()
+		return errors.New("no known endpoints for peer")
 	}
-	if peer.endpoint.clearSrcOnTx {
-		endpoint.ClearSrc()
-		peer.endpoint.clearSrcOnTx = false
-	}
-	peer.endpoint.Unlock()
-
-	err := peer.device.net.bind.Send(buffers, endpoint)
-	if err == nil {
-		var totalLen uint64
-		for _, b := range buffers {
-			totalLen += uint64(len(b))
+	if peer.endpoints.clearSrcOnTx {
+		for _, ep := range endpoints {
+			ep.ClearSrc()
 		}
-		peer.txBytes.Add(totalLen)
+		for _, ep := range eps {
+			if ep != nil {
+				ep.ClearSrc()
+			}
+		}
+		peer.endpoints.clearSrcOnTx = false
 	}
-	return err
+	peer.endpoints.Unlock()
+
+	// optimization, if multiple contiguous buffers share the same endpoint, send them in a single batch
+	prevIdx := 0
+	prevEp := eps[0]
+
+	var anyError error
+	for i := 0; i <= len(buffers); i++ {
+		if i == len(buffers) || eps[i] != prevEp {
+			// send batch from prevIdx to i-1
+			if prevEp == nil {
+				prevEp = endpoints[0] // default endpoint
+			}
+			err := peer.device.net.bind.Send(buffers[prevIdx:i], prevEp)
+			if err != nil {
+				anyError = err
+			}
+			prevIdx = i
+			if i < len(buffers) {
+				prevEp = eps[i]
+			}
+		}
+	}
+
+	var totalLen uint64
+	for _, b := range buffers {
+		totalLen += uint64(len(b))
+	}
+	perf.SentPacketPerSecond.Add(float64(len(buffers)))
+	perf.SentBytesPerSecond.Add(float64(totalLen))
+	peer.txBytes.Add(totalLen)
+	return anyError
+}
+
+func (peer *Peer) GetPublicKey() NoisePublicKey {
+	return peer.handshake.remoteStatic
 }
 
 func (peer *Peer) String() string {
@@ -185,7 +222,7 @@ func (peer *Peer) Start() {
 	}
 
 	device := peer.device
-	device.log.Verbosef("%v - Starting", peer)
+	device.Log.Verbosef("%v - Starting", peer)
 
 	// reset routine state
 	peer.stopping.Wait()
@@ -264,7 +301,7 @@ func (peer *Peer) Stop() {
 		return
 	}
 
-	peer.device.log.Verbosef("%v - Stopping", peer)
+	peer.device.Log.Verbosef("%v - Stopping", peer)
 
 	peer.timersStop()
 	// Signal that RoutineSequentialSender and RoutineSequentialReceiver should exit.
@@ -277,20 +314,75 @@ func (peer *Peer) Stop() {
 }
 
 func (peer *Peer) SetEndpointFromPacket(endpoint conn.Endpoint) {
-	peer.endpoint.Lock()
-	defer peer.endpoint.Unlock()
-	if peer.endpoint.disableRoaming {
+	peer.endpoints.Lock()
+	defer peer.endpoints.Unlock()
+	if peer.endpoints.disableRoaming {
 		return
 	}
-	peer.endpoint.clearSrcOnTx = false
-	peer.endpoint.val = endpoint
+	peer.endpoints.clearSrcOnTx = false
+
+	if peer.endpoints.preferRoaming || len(peer.endpoints.val) == 0 {
+		if len(peer.endpoints.val) == 0 {
+			peer.endpoints.val = append(peer.endpoints.val, endpoint)
+		} else {
+			peer.endpoints.val[0] = endpoint
+		}
+	}
+}
+
+// SetEndpoints configures the endpoints of the peer. The first endpoint will be the default endpoint used for packet routing
+func (peer *Peer) SetEndpoints(endpoints []conn.Endpoint) {
+	peer.endpoints.Lock()
+	defer peer.endpoints.Unlock()
+	peer.endpoints.val = endpoints
+}
+
+func (peer *Peer) GetEndpoints() []conn.Endpoint {
+	peer.handshake.mutex.RLock()
+	defer peer.handshake.mutex.RUnlock()
+	return slices.Clone(peer.endpoints.val)
+}
+
+func (peer *Peer) CleanEndpoints() {
+	peer.handshake.mutex.Lock()
+	defer peer.handshake.mutex.Unlock()
+	if len(peer.endpoints.val) > 1 {
+		peer.endpoints.val = peer.endpoints.val[:1]
+	}
+}
+
+func (peer *Peer) SetPreferRoaming(val bool) {
+	peer.endpoints.Lock()
+	defer peer.endpoints.Unlock()
+	peer.endpoints.preferRoaming = val
+}
+
+func (peer *Peer) GetPreferRoaming() bool {
+	peer.handshake.mutex.RLock()
+	defer peer.handshake.mutex.RUnlock()
+	return peer.endpoints.preferRoaming
 }
 
 func (peer *Peer) markEndpointSrcForClearing() {
-	peer.endpoint.Lock()
-	defer peer.endpoint.Unlock()
-	if peer.endpoint.val == nil {
+	peer.endpoints.Lock()
+	defer peer.endpoints.Unlock()
+	if len(peer.endpoints.val) == 0 {
 		return
 	}
-	peer.endpoint.clearSrcOnTx = true
+	peer.endpoints.clearSrcOnTx = true
+}
+
+func (peer *Peer) LastReceivedPacket() time.Time {
+	nano := peer.timers.lastReceived.Load()
+	return time.Unix(0, nano)
+}
+
+func (peer *Peer) SetPersistentKeepaliveInterval(interval time.Duration) {
+	old := peer.persistentKeepaliveInterval.Swap(uint32(interval.Seconds()))
+
+	// Send immediate keepalive if we're turning it on and before it wasn't on.
+	if old == 0 && interval.Seconds() != 0 {
+		peer.SendKeepalive()
+		peer.SendStagedPackets()
+	}
 }

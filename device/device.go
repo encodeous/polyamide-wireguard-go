@@ -6,15 +6,16 @@
 package device
 
 import (
+	"bufio"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"golang.zx2c4.com/wireguard/conn"
-	"golang.zx2c4.com/wireguard/ratelimiter"
-	"golang.zx2c4.com/wireguard/rwcancel"
-	"golang.zx2c4.com/wireguard/tun"
+	"github.com/encodeous/nylon/polyamide/conn"
+	"github.com/encodeous/nylon/polyamide/ratelimiter"
+	"github.com/encodeous/nylon/polyamide/rwcancel"
+	"github.com/encodeous/nylon/polyamide/tun"
 )
 
 type Device struct {
@@ -63,7 +64,8 @@ type Device struct {
 		limiter        ratelimiter.Ratelimiter
 	}
 
-	allowedips    AllowedIPs
+	TCFilters     []TCFilter
+	Allowedips    AllowedIPs
 	indexTable    IndexTable
 	cookieChecker CookieChecker
 
@@ -73,6 +75,7 @@ type Device struct {
 		messageBuffers            *WaitPool
 		inboundElements           *WaitPool
 		outboundElements          *WaitPool
+		tcElements                *WaitPool
 	}
 
 	queue struct {
@@ -86,9 +89,10 @@ type Device struct {
 		mtu    atomic.Int32
 	}
 
-	ipcMutex sync.RWMutex
-	closed   chan struct{}
-	log      *Logger
+	ipcMutex   sync.RWMutex
+	IpcHandler map[string]func(*bufio.ReadWriter) error
+	closed     chan struct{}
+	Log        *Logger
 }
 
 // deviceState represents the state of a Device.
@@ -128,7 +132,7 @@ func (device *Device) isUp() bool {
 // Must hold device.peers.Lock()
 func removePeerLocked(device *Device, peer *Peer, key NoisePublicKey) {
 	// stop routing and processing of packets
-	device.allowedips.RemoveByPeer(peer)
+	device.Allowedips.RemoveByPeer(peer)
 	peer.Stop()
 
 	// remove from peer map
@@ -142,7 +146,7 @@ func (device *Device) changeState(want deviceState) (err error) {
 	old := device.deviceState()
 	if old == deviceStateClosed {
 		// once closed, always closed
-		device.log.Verbosef("Interface closed, ignored requested state %s", want)
+		device.Log.Verbosef("Interface closed, ignored requested state %s", want)
 		return nil
 	}
 	switch want {
@@ -162,7 +166,7 @@ func (device *Device) changeState(want deviceState) (err error) {
 			err = errDown
 		}
 	}
-	device.log.Verbosef("Interface state was %s, requested %s, now %s", old, want, device.deviceState())
+	device.Log.Verbosef("Interface state was %s, requested %s, now %s", old, want, device.deviceState())
 	return
 }
 
@@ -170,7 +174,7 @@ func (device *Device) changeState(want deviceState) (err error) {
 // The caller must hold device.state.mu and is responsible for updating device.state.state.
 func (device *Device) upLocked() error {
 	if err := device.BindUpdate(); err != nil {
-		device.log.Errorf("Unable to update bind: %v", err)
+		device.Log.Errorf("Unable to update bind: %v", err)
 		return err
 	}
 
@@ -178,6 +182,7 @@ func (device *Device) upLocked() error {
 	// so if there's a concurrent IPC set request happening, we should wait for it to complete.
 	device.ipcMutex.Lock()
 	defer device.ipcMutex.Unlock()
+	device.IpcHandler = make(map[string]func(*bufio.ReadWriter) error)
 
 	device.peers.RLock()
 	for _, peer := range device.peers.keyMap {
@@ -195,7 +200,7 @@ func (device *Device) upLocked() error {
 func (device *Device) downLocked() error {
 	err := device.BindClose()
 	if err != nil {
-		device.log.Errorf("Bind close failed: %v", err)
+		device.Log.Errorf("Bind close failed: %v", err)
 	}
 
 	device.peers.RLock()
@@ -285,18 +290,21 @@ func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger) *Device {
 	device := new(Device)
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
-	device.log = logger
+	device.Log = logger
 	device.net.bind = bind
 	device.tun.device = tunDevice
 	mtu, err := device.tun.device.MTU()
 	if err != nil {
-		device.log.Errorf("Trouble determining MTU, assuming default: %v", err)
+		device.Log.Errorf("Trouble determining MTU, assuming default: %v", err)
 		mtu = DefaultMTU
 	}
 	device.tun.mtu.Store(int32(mtu))
 	device.peers.keyMap = make(map[NoisePublicKey]*Peer)
 	device.rate.limiter.Init()
 	device.indexTable.Init()
+	device.TCFilters = append(device.TCFilters, TCFDrop)
+	device.TCFilters = append(device.TCFilters, TCFBounce)
+	device.TCFilters = append(device.TCFilters, TCFAllowedip)
 
 	device.PopulatePools()
 
@@ -345,6 +353,17 @@ func (device *Device) LookupPeer(pk NoisePublicKey) *Peer {
 	return device.peers.keyMap[pk]
 }
 
+func (device *Device) GetPeers() []*Peer {
+	device.peers.RLock()
+	defer device.peers.RUnlock()
+
+	peers := make([]*Peer, 0, len(device.peers.keyMap))
+	for _, peer := range device.peers.keyMap {
+		peers = append(peers, peer)
+	}
+	return peers
+}
+
 func (device *Device) RemovePeer(key NoisePublicKey) {
 	device.peers.Lock()
 	defer device.peers.Unlock()
@@ -376,7 +395,7 @@ func (device *Device) Close() {
 		return
 	}
 	device.state.state.Store(uint32(deviceStateClosed))
-	device.log.Verbosef("Device closing")
+	device.Log.Verbosef("Device closing")
 
 	device.tun.device.Close()
 	device.downLocked()
@@ -395,7 +414,7 @@ func (device *Device) Close() {
 
 	device.rate.limiter.Close()
 
-	device.log.Verbosef("Device closed")
+	device.Log.Verbosef("Device closed")
 	close(device.closed)
 }
 
@@ -524,7 +543,7 @@ func (device *Device) BindUpdate() error {
 		go device.RoutineReceiveIncoming(batchSize, fn)
 	}
 
-	device.log.Verbosef("UDP bind has been updated")
+	device.Log.Verbosef("UDP bind has been updated")
 	return nil
 }
 
