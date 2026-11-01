@@ -17,9 +17,9 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 
-	"github.com/encodeous/nylon/polyamide/conn"
-	"github.com/encodeous/nylon/polyamide/device"
-	"github.com/encodeous/nylon/polyamide/tun/netstack"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
+	"github.com/encodeous/polyamide-wireguard-go/device"
+	"github.com/encodeous/polyamide-wireguard-go/tun/netstack"
 )
 
 func main() {

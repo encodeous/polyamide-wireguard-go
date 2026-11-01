@@ -12,7 +12,7 @@ import (
 	"net/netip"
 	"os"
 
-	"github.com/encodeous/nylon/polyamide/conn"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
 )
 
 type ChannelBind struct {

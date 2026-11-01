@@ -12,11 +12,11 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/encodeous/nylon/polyamide/conn"
-	"github.com/encodeous/nylon/polyamide/device"
-	"github.com/encodeous/nylon/polyamide/ipc"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
+	"github.com/encodeous/polyamide-wireguard-go/device"
+	"github.com/encodeous/polyamide-wireguard-go/ipc"
 
-	"github.com/encodeous/nylon/polyamide/tun"
+	"github.com/encodeous/polyamide-wireguard-go/tun"
 )
 
 const (

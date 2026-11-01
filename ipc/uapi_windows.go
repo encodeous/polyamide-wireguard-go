@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/encodeous/nylon/polyamide/ipc/namedpipe"
+	"github.com/encodeous/polyamide-wireguard-go/ipc/namedpipe"
 	"golang.org/x/sys/windows"
 )
 

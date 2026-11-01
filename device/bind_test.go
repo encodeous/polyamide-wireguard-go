@@ -8,7 +8,7 @@ package device
 import (
 	"errors"
 
-	"github.com/encodeous/nylon/polyamide/conn"
+	"github.com/encodeous/polyamide-wireguard-go/conn"
 )
 
 type DummyDatagram struct {
